@@ -1,0 +1,251 @@
+---
+title: "P8105 Homework 5"
+author: "Chengshun Zhao"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem 1
+```{r}
+birthday_match = function(n) {
+  birthdays = sample(1:365, size = n, replace = TRUE)
+  any(duplicated(birthdays))
+}
+
+set.seed(123)
+birthday_match(23)
+```
+
+```{r}
+set.seed(123)
+
+group_sizes = 2:50
+
+probabilities = sapply(group_sizes, function(n) {
+  mean(replicate(10000, birthday_match(n)))
+})
+
+birthday_results = data.frame(
+  group_size = group_sizes,
+  probability = probabilities
+)
+
+head(birthday_results)
+```
+```{r}
+library(ggplot2)
+
+ggplot(birthday_results, aes(x = group_size, y = probability)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 1.5) +
+  labs(
+    title = "Probability of Shared Birthdays",
+    x = "Number of People",
+    y = "Probability of At Least One Shared Birthday"
+  ) +
+  theme_minimal()
+```
+
+The simulation shows that the probability of at least two people sharing a birthday increases as group size increases. The probability is approximately 50% with 23 people and exceeds 90% with around 41 people. This illustrates how shared birthdays become increasingly likely even in relatively small groups.
+
+## Problem 2
+```{r}
+library(tidyverse)
+
+file_data = tibble(
+  file_name = list.files(
+    path = "data",
+    pattern = "\\.csv$",
+    full.names = TRUE
+  )
+)
+
+file_data = file_data |>
+  mutate(
+    subject_data = purrr::map(file_name, readr::read_csv,
+                              show_col_types = FALSE)
+  )
+
+print(file_data, n = 20)
+```
+```{r}
+tidy_data = file_data |>
+  mutate(
+    file = basename(file_name),
+    arm = if_else(
+      str_starts(file, "con"),
+      "Control",
+      "Experimental"
+    ),
+    subject_id = str_extract(file, "\\d+")
+  ) |>
+  select(subject_id, arm, subject_data) |>
+  unnest(cols = subject_data) |>
+  pivot_longer(
+    cols = starts_with("week"),
+    names_to = "week",
+    values_to = "observation"
+  ) |>
+  mutate(
+    week = as.numeric(str_extract(week, "\\d+")),
+    observation = as.numeric(observation)
+  ) |>
+  arrange(arm, subject_id, week)
+
+# Check the tidy data
+print(head(tidy_data, 12))
+```
+```{r}
+ggplot(
+  tidy_data,
+  aes(
+    x = week,
+    y = observation,
+    group = interaction(arm, subject_id),
+    color = arm
+  )
+) +
+  geom_line(linewidth = 0.7, alpha = 0.8) +
+  geom_point(size = 1.5, alpha = 0.8) +
+  facet_grid(. ~ arm) +
+  scale_color_manual(
+    values = c(
+      "Control" = "#F8766D",
+      "Experimental" = "#00BFC4"
+    )
+  ) +
+  scale_x_continuous(breaks = 1:8) +
+  labs(
+    x = "Week",
+    y = "Outcome",
+    color = "arm"
+  ) +
+  theme_gray()
+```
+
+The experimental group shows an increasing trend over time, while the control group remains relatively stable. By week 8, the experimental group generally has higher outcome values than the control group.
+
+## Problem 3
+
+```{r}
+library(tidyverse)
+library(broom)
+
+set.seed(123)
+
+simulate_t_test = function(mu) {
+
+  sample_data = rnorm(
+    n = 30,
+    mean = mu,
+    sd = 5
+  )
+
+  test_result = t.test(
+    sample_data,
+    mu = 0
+  )
+
+  broom::tidy(test_result) |>
+    select(estimate, p.value)
+}
+
+simulate_t_test(mu = 0)
+```
+```{r}
+set.seed(123)
+
+simulation_results = purrr::map_dfr(
+  0:6,
+  function(current_mu) {
+
+    purrr::map_dfr(
+      1:5000,
+      function(i) {
+        simulate_t_test(current_mu)
+      }
+    ) |>
+      mutate(mu = current_mu)
+
+  }
+) |>
+  select(mu, estimate, p.value)
+
+# Check the results
+head(simulation_results, 10)
+nrow(simulation_results)
+```
+```{r}
+power_results = simulation_results |>
+  group_by(mu) |>
+  summarize(
+    power = mean(p.value < 0.05),
+    .groups = "drop"
+  )
+
+print(power_results)
+
+# Plot power against the true mean
+ggplot(power_results, aes(x = mu, y = power)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  scale_x_continuous(breaks = 0:6) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Statistical Power vs. True Mean",
+    x = "True Mean (mu)",
+    y = "Power"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+
+estimate_results = simulation_results |>
+  group_by(mu) |>
+  summarize(
+    overall_mean = mean(estimate),
+    rejected_mean = mean(estimate[p.value < 0.05]),
+    .groups = "drop"
+  )
+
+print(estimate_results)
+
+ggplot(estimate_results, aes(x = mu)) +
+  geom_line(
+    aes(y = overall_mean, color = "All samples"),
+    linewidth = 1
+  ) +
+  geom_point(
+    aes(y = overall_mean, color = "All samples"),
+    size = 2
+  ) +
+  geom_line(
+    aes(y = rejected_mean, color = "Rejected samples only"),
+    linewidth = 1
+  ) +
+  geom_point(
+    aes(y = rejected_mean, color = "Rejected samples only"),
+    size = 2
+  ) +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed"
+  ) +
+  scale_x_continuous(breaks = 0:6) +
+  labs(
+    title = "Average Estimated Mean vs. True Mean",
+    x = "True Mean (mu)",
+    y = "Average Estimated Mean",
+    color = "Sample Group"
+  ) +
+  theme_minimal()
+```
+
+Power: Statistical power increases as the true mean moves farther from zero. Larger effect sizes are more likely to be detected.
+
+Mean estimates: The average estimates across all samples are close to the true means. However, estimates from rejected tests tend to overestimate smaller positive effects because only statistically significant results are selected. This difference becomes smaller as statistical power increases.
